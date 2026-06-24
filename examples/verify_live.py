@@ -41,16 +41,20 @@ def main() -> None:
         event_id = sentry_sdk.capture_exception()
     print(f"captured exception event_id={event_id}")
 
-    # 2) cron 死人开关 check-in(成功路)
+    # 2) cron 死人开关(成功路)。GlitchTip 6.2 走 Heartbeat URL;
+    #    env ZLX_HEARTBEAT_URL 配上 Heartbeat monitor 的 check-in URL 才会真打点。
     @monitor(monitor_slug=SLUG, schedule="*/5 * * * *", timezone="Asia/Shanghai")
     def sample_cron():
         print("cron 任务体执行中...")
         return "done"
 
     print(f"cron -> {sample_cron()}")
+    if not os.environ.get("ZLX_HEARTBEAT_URL"):
+        print("提示:未设 ZLX_HEARTBEAT_URL → GlitchTip 6.2 上 cron 不会真打点"
+              "(capture_checkin 被忽略);建 Heartbeat monitor 后配该 env 再跑。")
 
     sentry_sdk.flush(timeout=5)
-    print("flush 完成。去 GlitchTip 看事件 + check-in。")
+    print("flush 完成。去 GlitchTip 看事件 + heartbeat check。")
 
 
 if __name__ == "__main__":

@@ -53,27 +53,48 @@ zlx_ops_sdk.init(
 
 ### 2. cron 死人开关 `@monitor`
 
-用 GlitchTip 自带 Cron Monitor,声明 `monitor_slug`(在 GlitchTip 建好同名 monitor):
+`@monitor` 同时挂两条互补的死人开关,都 fail-open:
 
 ```python
 from zlx_ops_sdk import monitor
 
-@monitor(monitor_slug="nightly-sync", schedule="0 3 * * *", timezone="Asia/Shanghai")
+@monitor(
+    monitor_slug="nightly-sync",          # Sentry crons slug
+    schedule="0 3 * * *",
+    timezone="Asia/Shanghai",
+    # GlitchTip 6.2 实际生效的那条:Heartbeat URL(缺省读 env ZLX_HEARTBEAT_URL)
+    heartbeat_url="http://<gt>/api/0/organizations/<org>/heartbeat_check/<endpoint_id>/",
+)
 def nightly_sync():
     do_work()
 ```
 
-四路行为:
+#### 机制 A — GlitchTip Heartbeat URL(GlitchTip 6.2 推荐用这条)
+
+> ⚠️ **重要**:GlitchTip 6.2 把 Sentry 的 `check_in` envelope 列入 `IgnoredItemType`
+> —— 收下即丢。所以**在 GlitchTip 上真正生效的 cron 死人开关是 Heartbeat 监控**,
+> 不是 `capture_checkin`。
+
+在 GlitchTip 建一个 **Heartbeat** 类型 monitor → 拿它的 check-in URL
+(`{DOMAIN}/api/0/organizations/{org}/heartbeat_check/{endpoint_id}/`),配到
+`heartbeat_url` 或 env `ZLX_HEARTBEAT_URL`。语义是 **ping-on-alive**:
 
 | 情况 | 行为 |
 |---|---|
-| 任务成功 | check-in `ok` |
-| 任务抛异常 | check-in `error`,**异常仍向上抛(不吞)** |
-| 漏启动 | 传了 `schedule` → server 端注册,GlitchTip 标记 missed |
-| check-in 端点宕 | 只记 warning,**任务照常跑/照常抛**(fail-open) |
+| 任务成功 | POST heartbeat URL(标记"活着") |
+| 任务抛异常 | **不 ping**(异常仍向上抛),GlitchTip 因"该来没来"标记 down 告警 |
+| 漏启动 | 整个进程没跑 → 自然没 ping → GlitchTip 告警(真 dead-man) |
+| heartbeat 端点宕 | 只记 warning,**任务照常跑/照常抛**(fail-open) |
 
-可选参数:`schedule`(crontab)、`checkin_margin`、`max_runtime`、`timezone`。
-**只有传了 `schedule`,GlitchTip 才能检测"漏启动"**。
+任务崩溃时:未捕获异常仍由 `init()` 上报成 error 事件,**且**没有 heartbeat ping
+→ 双重覆盖。
+
+#### 机制 B — Sentry crons `capture_checkin`(可移植/未来兼容,当前 GlitchTip 上 no-op)
+
+`@monitor` 仍会发 in_progress/ok/error check-in + 用 `schedule` 注册 monitor_config。
+对接**真 Sentry** 或未来支持 crons 的 GlitchTip 时这条生效;在 GlitchTip 6.2 上被忽略,
+保留它零成本且向前兼容。可选参数:`schedule`(crontab)、`checkin_margin`、
+`max_runtime`、`timezone`。
 
 ## 版本钉法 / rollout 规则(爆炸半径管控)
 
@@ -95,11 +116,18 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ```
 
 覆盖:init fail-open(缺 DSN / init 抛 / 超时有界 / kill switch / happy / env DSN)、
-cron 四路(成功 / 失败重抛 / schedule 注册 / 端点宕 fail-open)。
+cron Sentry-crons 四路(成功 / 失败重抛 / schedule 注册 / 端点宕 fail-open)、
+cron Heartbeat(成功 ping / 失败不 ping 重抛 / 端点宕 fail-open / env URL / 未配 no-op)、
+真实 sentry_sdk 事件集成(release+tag 实测附着)。
+
+已在开发机 GlitchTip 6.2(100.87.124.57:8000)活体验证:错误事件带
+`release=zj1123581321/zlx-ops-sdk@<sha>` + service/repo/server tag 入库;Heartbeat
+监控收到 check(`is_up=True`)。
 
 ## 给下游(Lane C / D4 模板)的接入说明
 
 - 包名:`zlx-ops-sdk`,import 名:`zlx_ops_sdk`,依赖钉 `~=0.1`。
 - init 签名:`zlx_ops_sdk.init(service, *, dsn=None, release=None, server=None, repo=None, environment=None, timeout=5.0, **sentry_kwargs) -> InitResult`
-- cron 签名:`zlx_ops_sdk.monitor(*, monitor_slug, schedule=None, checkin_margin=None, max_runtime=None, timezone=None)`
-- env 契约:`SENTRY_DSN`(DSN 来源)、`ZLX_OPS_DISABLED=1`(kill switch)、`GIT_SHA`/`RELEASE`(release 兜底)。
+- cron 签名:`zlx_ops_sdk.monitor(*, monitor_slug, schedule=None, checkin_margin=None, max_runtime=None, timezone=None, heartbeat_url=None, heartbeat_timeout=5.0)`
+- env 契约:`SENTRY_DSN`(DSN 来源)、`ZLX_OPS_DISABLED=1`(kill switch)、`GIT_SHA`/`RELEASE`(release 兜底)、`ZLX_HEARTBEAT_URL`(cron heartbeat URL 兜底)。
+- **GlitchTip 6.2 注意**:cron 死人开关用 **Heartbeat 监控**(建 Heartbeat 类型 monitor → 配 `heartbeat_url`),Sentry `capture_checkin` 在该版本被忽略。registry 每个 cron 服务应存其 heartbeat endpoint URL。
