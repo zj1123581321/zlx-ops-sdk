@@ -95,11 +95,15 @@ def init(
                     environment=environment,
                     **sentry_kwargs,
                 )
-                sentry_sdk.set_tag("service", service)
+                # 用 global scope:tag 进程内全线程生效。
+                # (init 跑在 worker 线程,sentry 2.x 的 current/isolation scope
+                #  是 context-local,在此设的 tag 不会到主线程捕获的事件上。)
+                scope = sentry_sdk.get_global_scope()
+                scope.set_tag("service", service)
                 if repo:
-                    sentry_sdk.set_tag("repo", repo)
+                    scope.set_tag("repo", repo)
                 if server:
-                    sentry_sdk.set_tag("server", server)
+                    scope.set_tag("server", server)
                 holder["ok"] = True
             except BaseException as exc:  # noqa: BLE001 — 线程内必须吞干净
                 holder["error"] = exc
