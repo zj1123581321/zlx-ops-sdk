@@ -24,7 +24,10 @@
 pip install "zlx-ops-sdk~=0.1"   # 见下方"版本钉法 / rollout 规则"
 ```
 
-依赖 `sentry-sdk>=2.0,<3.0`。
+依赖 `sentry-sdk>=2.0,<3.0`。包打了 PEP 561 `py.typed`,下游直接吃类型,无需 mypy override。
+
+发布走 PyPI **Trusted Publishing**(OIDC,无存 token):push `v*` tag → `.github/workflows/publish.yml`
+自动 build + 发布。一次性需在 pypi.org 配 pending publisher(owner/repo/workflow/environment=pypi)。
 
 ## 用法
 
@@ -118,7 +121,8 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 覆盖:init fail-open(缺 DSN / init 抛 / 超时有界 / kill switch / happy / env DSN)、
 cron Sentry-crons 四路(成功 / 失败重抛 / schedule 注册 / 端点宕 fail-open)、
 cron Heartbeat(成功 ping / 失败不 ping 重抛 / 端点宕 fail-open / env URL / 未配 no-op)、
-真实 sentry_sdk 事件集成(release+tag 实测附着)。
+真实 sentry_sdk 事件集成(release+tag 实测附着)、
+打包契约(py.typed 随 sdist/wheel 落地,下游免 mypy override)。
 
 已在开发机 GlitchTip 6.2(100.87.124.57:8000)活体验证:错误事件带
 `release=zj1123581321/zlx-ops-sdk@<sha>` + service/repo/server tag 入库;Heartbeat
