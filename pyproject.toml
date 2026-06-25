@@ -25,6 +25,11 @@ Homepage = "https://github.com/zj1123581321/zlx-ops-sdk"
 [tool.setuptools.packages.find]
 include = ["zlx_ops_sdk*"]
 
+# PEP 561:py.typed 是非 .py 文件,setuptools 默认不收,必须显式声明,
+# 否则源码树有它但 sdist/wheel 漏掉它,下游照样吃不到类型。
+[tool.setuptools.package-data]
+zlx_ops_sdk = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 log_cli = false
